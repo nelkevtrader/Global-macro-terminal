@@ -8,6 +8,7 @@ st.set_page_config(layout="wide")
 
 st.title("🌍 Global Macro Stress Terminal")
 
+# --- LOAD DATA ---
 data = requests.get(API).json()
 
 countries = data["countries"]
@@ -17,36 +18,29 @@ regime = data["regime"]
 df = pd.DataFrame(list(countries.items()), columns=["Country", "Stress"])
 df = df.sort_values(by="Stress", ascending=False)
 
-# --- HEADER METRICS WITH INFO ---
+# --- HEADER METRICS ---
 col1, col2 = st.columns(2)
 
 with col1:
     st.metric("Global Contagion Index (GCI)", gci)
     with st.expander("ℹ️ What is GCI?"):
         st.write("""
-        The Global Contagion Index measures the average stress across all tracked countries.
+        The Global Contagion Index measures average stress across all countries.
         
-        Higher values indicate:
-        - capital flight
-        - currency instability
-        - rising systemic risk
-        
-        > 0.75 = Crisis conditions  
-        0.6–0.75 = Contagion spreading  
+        > 0.75 = Crisis  
+        0.6–0.75 = Contagion  
         0.4–0.6 = Regional stress  
-        < 0.4 = Stable
+        < 0.4 = Stable  
         """)
 
 with col2:
     st.metric("Regime", regime)
     with st.expander("ℹ️ What does this mean?"):
         st.write("""
-        The regime indicates the current macro environment:
-        
-        - **Stable** → low volatility  
-        - **Regional Stress** → localized issues  
-        - **Contagion Stress** → spreading instability  
-        - **Crisis** → systemic global risk
+        - Stable → low volatility  
+        - Regional Stress → localized issues  
+        - Contagion Stress → spreading instability  
+        - Crisis → global systemic risk  
         """)
 
 st.divider()
@@ -62,7 +56,6 @@ def color_stress(val):
     else:
         return 'background-color: green; color: white'
 
-# Apply styling
 styled_df = df.style.applymap(color_stress, subset=["Stress"])
 
 # --- TOP RISK COUNTRIES ---
@@ -73,44 +66,31 @@ st.dataframe(top_risk, use_container_width=True)
 
 with st.expander("ℹ️ Why this matters"):
     st.write("""
-    These countries represent the highest immediate stress signals.
+    These are the countries under the highest stress right now.
     
     Watch for:
-    - clustering → contagion risk
-    - sudden jumps → early crisis signal
+    - clusters → contagion risk  
+    - sudden spikes → early crisis signal  
     """)
 
-# --- FULL TABLE WITH COLORS ---
+# --- FULL HEATMAP TABLE ---
 st.subheader("🌍 Global Stress Heatmap")
 
 st.dataframe(styled_df, use_container_width=True)
 
 with st.expander("ℹ️ Color Guide"):
     st.write("""
-    🔴 Red → Crisis level  
+    🔴 Red → Crisis  
     🟠 Orange → High stress  
-    🟡 Yellow → Moderate stress  
+    🟡 Yellow → Moderate  
     🟢 Green → Stable  
     """)
 
-# --- BAR CHART ---
+# --- CHART ---
 st.subheader("📊 Stress Distribution")
-st.bar_chart(df.set_index("Country"))
-
-# --- BAR CHART ---
-st.subheader("Stress Distribution")
-
-with st.expander("ℹ️ Chart explanation"):
-    st.write("""
-    This chart shows relative stress levels across countries.
-    
-    Key signals:
-    - multiple high bars → contagion risk
-    - one extreme bar → localized crisis
-    """)
 
 st.bar_chart(df.set_index("Country"))
 
-# --- REFRESH ---
+# --- REFRESH BUTTON ---
 if st.button("Refresh"):
     st.rerun()
