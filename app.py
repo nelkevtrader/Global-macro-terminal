@@ -51,24 +51,51 @@ with col2:
 
 st.divider()
 
-# --- COUNTRY TABLE ---
-st.subheader("Country Stress Levels")
+# --- COLOR FUNCTION ---
+def color_stress(val):
+    if val > 0.75:
+        return 'background-color: red; color: white'
+    elif val > 0.6:
+        return 'background-color: orange'
+    elif val > 0.4:
+        return 'background-color: yellow'
+    else:
+        return 'background-color: green; color: white'
 
-with st.expander("ℹ️ How to read this table"):
+# Apply styling
+styled_df = df.style.applymap(color_stress, subset=["Stress"])
+
+# --- TOP RISK COUNTRIES ---
+st.subheader("🚨 Highest Risk Countries")
+
+top_risk = df.head(5)
+st.dataframe(top_risk, use_container_width=True)
+
+with st.expander("ℹ️ Why this matters"):
     st.write("""
-    Each country has a stress score between 0 and 1.
-    
-    Higher = more pressure on:
-    - currency
-    - capital flows
-    - economic stability
+    These countries represent the highest immediate stress signals.
     
     Watch for:
-    - clusters of high values
-    - rapid increases
+    - clustering → contagion risk
+    - sudden jumps → early crisis signal
     """)
 
-st.dataframe(df, use_container_width=True)
+# --- FULL TABLE WITH COLORS ---
+st.subheader("🌍 Global Stress Heatmap")
+
+st.dataframe(styled_df, use_container_width=True)
+
+with st.expander("ℹ️ Color Guide"):
+    st.write("""
+    🔴 Red → Crisis level  
+    🟠 Orange → High stress  
+    🟡 Yellow → Moderate stress  
+    🟢 Green → Stable  
+    """)
+
+# --- BAR CHART ---
+st.subheader("📊 Stress Distribution")
+st.bar_chart(df.set_index("Country"))
 
 # --- BAR CHART ---
 st.subheader("Stress Distribution")
