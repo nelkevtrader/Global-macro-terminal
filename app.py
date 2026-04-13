@@ -42,7 +42,7 @@ regime = data["regime"]
 
 df = pd.DataFrame(list(countries.items()), columns=["Currency", "Stress"])
 
-# Add full label
+# --- LABELING ---
 df["Country"] = df["Currency"].map(currency_map)
 df["Label"] = df["Currency"] + " - " + df["Country"].fillna("Unknown")
 
@@ -52,19 +52,23 @@ df = df.sort_values(by="Stress", ascending=False)
 df["Prev_Stress"] = df["Stress"] + np.random.normal(0, 0.05, len(df))
 df["Delta"] = df["Stress"] - df["Prev_Stress"]
 
+# --- CONVERT TO % ---
+df["Stress (%)"] = (df["Stress"] * 100).round(1)
+df["Delta (%)"] = (df["Delta"] * 100).round(1)
+
 # --- HEADER ---
 col1, col2 = st.columns(2)
 
 with col1:
-    st.metric("Global Contagion Index (GCI)", gci)
+    st.metric("Global Contagion Index (GCI)", f"{round(gci*100,1)}%")
     with st.expander("ℹ️ What is GCI?"):
         st.write("""
         Measures global macro stress across countries.
         
-        > 0.75 = Crisis  
-        0.6–0.75 = Contagion  
-        0.4–0.6 = Regional stress  
-        < 0.4 = Stable  
+        > 75% = Crisis  
+        60–75% = Contagion  
+        40–60% = Regional stress  
+        < 40% = Stable  
         """)
 
 with col2:
@@ -81,29 +85,32 @@ st.divider()
 
 # --- RISK LABEL ---
 def stress_label(val):
-    if val > 0.75:
+    if val > 75:
         return "🔴 Crisis"
-    elif val > 0.6:
+    elif val > 60:
         return "🟠 High"
-    elif val > 0.4:
+    elif val > 40:
         return "🟡 Moderate"
     else:
         return "🟢 Stable"
 
-df["Risk"] = df["Stress"].apply(stress_label)
+df["Risk"] = df["Stress (%)"].apply(stress_label)
 
 # --- ALERT SYSTEM ---
-alerts = df[df["Delta"] > 0.15]
+alerts = df[df["Delta (%)"] > 15]
 
 if not alerts.empty:
     st.error("🚨 ALERT: Rapid Stress Increase Detected")
-    st.dataframe(alerts[["Label", "Delta"]], use_container_width=True)
+    st.dataframe(alerts[["Label", "Delta (%)"]], use_container_width=True)
 
 # --- TOP RISK ---
 st.subheader("🚨 Highest Risk Countries")
 
 top_risk = df.head(5)
-st.dataframe(top_risk[["Label", "Stress", "Risk"]], use_container_width=True)
+st.dataframe(
+    top_risk[["Label", "Stress (%)", "Risk"]],
+    use_container_width=True
+)
 
 with st.expander("ℹ️ Why this matters"):
     st.write("""
@@ -117,7 +124,7 @@ with st.expander("ℹ️ Why this matters"):
 st.subheader("🌍 Global Stress Table")
 
 st.dataframe(
-    df[["Label", "Stress", "Delta", "Risk"]],
+    df[["Label", "Stress (%)", "Delta (%)", "Risk"]],
     use_container_width=True
 )
 
@@ -125,15 +132,15 @@ with st.expander("ℹ️ Risk Guide"):
     st.write("""
     🔴 Crisis → extreme stress  
     🟠 High → elevated risk  
-    🟡 Moderate → watch  
+    🟟 Moderate → watch  
     🟢 Stable → low risk  
     """)
 
 # --- MOMENTUM ---
-st.subheader("📈 Stress Momentum (Δ)")
+st.subheader("📈 Stress Momentum")
 
 st.dataframe(
-    df[["Label", "Stress", "Delta"]],
+    df[["Label", "Stress (%)", "Delta (%)"]],
     use_container_width=True
 )
 
@@ -144,13 +151,13 @@ with st.expander("ℹ️ Why momentum matters"):
     Rising stress = capital leaving  
     Falling stress = stabilization  
     
-    Large positive Δ = early warning signal  
+    Large increases = early warning signal  
     """)
 
 # --- CHART ---
 st.subheader("📊 Stress Distribution")
 
-chart_df = df.set_index("Label")["Stress"]
+chart_df = df.set_index("Label")["Stress (%)"]
 st.bar_chart(chart_df)
 
 # --- REFRESH ---
