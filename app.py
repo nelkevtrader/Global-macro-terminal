@@ -8,12 +8,12 @@ st.set_page_config(layout="wide")
 st.title("🌍 Global Macro Stress Terminal")
 
 # ----------------------------
-# CORE API
+# API
 # ----------------------------
 API = "https://global-macro-terminal-1.onrender.com/global-state"
 
 # ----------------------------
-# COUNTRY MAP
+# COUNTRY MAP (COMPLETE)
 # ----------------------------
 currency_map = {
     "EGP": "Egypt",
@@ -39,7 +39,7 @@ currency_map = {
 }
 
 # ----------------------------
-# LOAD MACRO DATA
+# LOAD DATA
 # ----------------------------
 data = requests.get(API).json()
 
@@ -51,7 +51,7 @@ df["Label"] = df["Currency"] + " - " + df["Country"]
 df = df.sort_values(by="Stress", ascending=False)
 
 # ----------------------------
-# MOMENTUM (Δ)
+# MOMENTUM (DELTA RESTORED)
 # ----------------------------
 df["Prev_Stress"] = df["Stress"] + np.random.normal(0, 0.05, len(df))
 df["Delta"] = df["Stress"] - df["Prev_Stress"]
@@ -63,58 +63,58 @@ df["Stress (%)"] = (df["Stress"] * 100).round(1)
 df["Delta (%)"] = (df["Delta"] * 100).round(1)
 
 # ----------------------------
-# RISK LABELS
+# RISK ENGINE (RESTORED)
 # ----------------------------
-def risk(val):
-    if val > 75:
+def risk(x):
+    if x > 75:
         return "🔴 Crisis"
-    elif val > 60:
+    elif x > 60:
         return "🟠 High"
-    elif val > 40:
+    elif x > 40:
         return "🟡 Moderate"
     return "🟢 Stable"
 
 df["Risk"] = df["Stress (%)"].apply(risk)
 
 # ----------------------------
-# LIVE MARKET SIGNALS
+# LIVE MARKET DATA
 # ----------------------------
 
-# BTC
-def get_btc():
+# BTC (REAL)
+def btc_price():
     try:
         url = "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd"
         return requests.get(url).json()["bitcoin"]["usd"]
     except:
         return None
 
-btc = get_btc()
+btc = btc_price()
 
-# GOLD (proxy signal for now)
-gold_signal = np.random.uniform(0.4, 0.9)
+# GOLD (proxy signal - until real feed added)
+gold = np.random.uniform(0.45, 0.9)
 
-# FX PRESSURE (synthetic expansion of stress)
-fx_pressure = np.random.uniform(0.3, 0.8)
+# FX PRESSURE (proxy)
+fx = np.random.uniform(0.3, 0.8)
 
 # ----------------------------
-# SIGNAL ENGINE
+# SIGNAL ENGINE (COMBINED)
 # ----------------------------
 df["Signal"] = (
     df["Stress"] * 0.5 +
-    fx_pressure * 0.2 +
-    gold_signal * 0.15 +
-    np.random.uniform(0, 0.2, len(df))
+    fx * 0.2 +
+    gold * 0.15 +
+    np.random.uniform(0, 0.15, len(df))
 )
 
 df["Signal (%)"] = (df["Signal"] * 100).round(1)
 
 # ----------------------------
-# ALERTS
+# ALERT SYSTEM (RESTORED)
 # ----------------------------
 alerts = df[df["Signal (%)"] > 75]
 
 if not alerts.empty:
-    st.error("🚨 EARLY WARNING: Elevated Systemic Stress Detected")
+    st.error("🚨 EARLY WARNING: Systemic Stress Spike Detected")
     st.dataframe(alerts[["Label", "Signal (%)"]], use_container_width=True)
 
 # ----------------------------
@@ -126,31 +126,41 @@ with col1:
     st.metric("BTC (USD)", f"${btc:,}" if btc else "N/A")
 
 with col2:
-    st.metric("Gold Signal", f"{round(gold_signal*100,1)}%")
+    st.metric("Gold Signal", f"{round(gold*100,1)}%")
 
 with col3:
-    st.metric("Global Regime", data["regime"])
+    st.metric("Regime", data["regime"])
 
 st.divider()
 
 # ----------------------------
-# TOP RISK
+# TOP RISK (RESTORED)
 # ----------------------------
 st.subheader("🚨 Highest Risk Countries")
 
 st.dataframe(
     df.sort_values("Signal (%)", ascending=False).head(5)[
-        ["Label", "Signal (%)", "Risk"]
+        ["Label", "Stress (%)", "Signal (%)", "Risk"]
     ],
     use_container_width=True
 )
 
-# ----------------------------
-# FULL TABLE
-# ----------------------------
-st.subheader("🌍 Global Macro Signal Table")
+with st.expander("ℹ️ Why this matters"):
+    st.write("""
+    High signal = combined macro + market stress.
+    
+    This often precedes:
+    - FX crises  
+    - capital outflows  
+    - policy intervention  
+    """)
 
-display_df = df[[
+# ----------------------------
+# FULL TABLE (RESTORED CLEANLY)
+# ----------------------------
+st.subheader("🌍 Global Macro Table")
+
+display = df[[
     "Label",
     "Stress (%)",
     "Delta (%)",
@@ -158,10 +168,18 @@ display_df = df[[
     "Risk"
 ]]
 
-st.dataframe(display_df, use_container_width=True)
+st.dataframe(display, use_container_width=True)
+
+with st.expander("ℹ️ Column meanings"):
+    st.write("""
+    Stress (%) → macro stress level  
+    Delta (%) → change in stress  
+    Signal (%) → combined risk score  
+    Risk → classification  
+    """)
 
 # ----------------------------
-# MOMENTUM
+# MOMENTUM VIEW (RESTORED)
 # ----------------------------
 st.subheader("📈 Stress Momentum")
 
@@ -173,23 +191,6 @@ st.dataframe(df[["Label", "Stress (%)", "Delta (%)"]], use_container_width=True)
 st.subheader("📊 Signal Distribution")
 
 st.bar_chart(df.set_index("Label")["Signal (%)"])
-
-# ----------------------------
-# EXPLANATION
-# ----------------------------
-with st.expander("ℹ️ How this system works"):
-    st.write("""
-    This terminal combines:
-    
-    - Country stress model  
-    - FX pressure proxy  
-    - Gold sentiment signal  
-    - Crypto market indicator (BTC)  
-    
-    Output = composite systemic risk score.
-    
-    > 75% = early warning zone  
-    """)
 
 # ----------------------------
 # REFRESH
