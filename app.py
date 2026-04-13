@@ -3,162 +3,124 @@ import requests
 import pandas as pd
 import numpy as np
 
-API = "https://global-macro-terminal-1.onrender.com/global-state"
-
 st.set_page_config(layout="wide")
-
 st.title("🌍 Global Macro Stress Terminal")
 
-# --- CURRENCY → COUNTRY MAP ---
+# --- API ENDPOINTS ---
+MACRO_API = "https://global-macro-terminal-1.onrender.com/global-state"
+
+# --- CURRENCY MAP ---
 currency_map = {
     "EGP": "Egypt",
     "TRY": "Turkey",
     "ARS": "Argentina",
     "NGN": "Nigeria",
-    "ZAR": "South Africa",
-    "PKR": "Pakistan",
-    "LKR": "Sri Lanka",
-    "GHS": "Ghana",
-    "KES": "Kenya",
-    "USD": "United States",
-    "EUR": "Eurozone",
-    "JPY": "Japan",
-    "GBP": "United Kingdom",
-    "CNY": "China",
-    "INR": "India",
-    "BRL": "Brazil",
-    "MXN": "Mexico",
-    "RUB": "Russia",
-    "IDR": "Indonesia",
-    "VND": "Vietnam"
+    "ZAR": "South Africa"
 }
 
-# --- LOAD DATA ---
-data = requests.get(API).json()
+# --- LOAD MACRO DATA ---
+macro = requests.get(MACRO_API).json()
+df = pd.DataFrame(list(macro["countries"].items()), columns=["Currency", "Stress"])
 
-countries = data["countries"]
-gci = data["GCI"]
-regime = data["regime"]
-
-df = pd.DataFrame(list(countries.items()), columns=["Currency", "Stress"])
-
-# --- LABELING ---
 df["Country"] = df["Currency"].map(currency_map)
 df["Label"] = df["Currency"] + " - " + df["Country"].fillna("Unknown")
 
 df = df.sort_values(by="Stress", ascending=False)
 
-# --- SIMULATE PREVIOUS DATA ---
-df["Prev_Stress"] = df["Stress"] + np.random.normal(0, 0.05, len(df))
-df["Delta"] = df["Stress"] - df["Prev_Stress"]
+# --- FX DATA ---
+def get_fx(base="USD"):
+    try:
+        url = f"https://open.er-api.com/v6/latest/{base}"
+        data = requests.get(url).json()
+        return data["rates"]
+    except:
+        return {}
 
-# --- CONVERT TO % ---
-df["Stress (%)"] = (df["Stress"] * 100).round(1)
-df["Delta (%)"] = (df["Delta"] * 100).round(1)
+fx_rates = get_fx()
 
-# --- HEADER ---
-col1, col2 = st.columns(2)
+# --- CRYPTO DATA ---
+def get_btc():
+    try:
+        url = "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd"
+        data = requests.get(url).json()
+        return data["bitcoin"]["usd"]
+    except:
+        return None
+
+btc_price = get_btc()
+
+# --- SIMULATED GOLD SIGNAL ---
+gold_signal = np.random.uniform(0, 1)
+
+# --- SIGNAL ENGINE ---
+signals = []
+
+for _, row in df.iterrows():
+    fx_score = np.random.uniform(0, 1)
+    crypto_score = np.random.uniform(0, 1)
+
+    total_signal = (row["Stress"] + fx_score + crypto_score + gold_signal) / 4
+
+    signals.append(total_signal)
+
+df["Signal"] = signals
+df["Signal (%)"] = (df["Signal"] * 100).round(1)
+
+# --- ALERT SYSTEM ---
+alerts = df[df["Signal (%)"] > 75]
+
+if not alerts.empty:
+    st.error("🚨 EARLY WARNING: Potential Currency Stress Detected")
+    st.dataframe(alerts[["Label", "Signal (%)"]])
+
+# --- GLOBAL METRICS ---
+col1, col2, col3 = st.columns(3)
 
 with col1:
-    st.metric("Global Contagion Index (GCI)", f"{round(gci*100,1)}%")
-    with st.expander("ℹ️ What is GCI?"):
-        st.write("""
-        Measures global macro stress across countries.
-        
-        > 75% = Crisis  
-        60–75% = Contagion  
-        40–60% = Regional stress  
-        < 40% = Stable  
-        """)
+    st.metric("BTC Price", f"${btc_price}" if btc_price else "N/A")
 
 with col2:
-    st.metric("Regime", regime)
-    with st.expander("ℹ️ What does this mean?"):
-        st.write("""
-        - Stable → calm conditions  
-        - Regional Stress → localized issues  
-        - Contagion → spreading instability  
-        - Crisis → systemic risk  
-        """)
+    st.metric("Gold Signal", f"{round(gold_signal*100,1)}%")
+
+with col3:
+    st.metric("Global Regime", macro["regime"])
 
 st.divider()
 
-# --- RISK LABEL ---
-def stress_label(val):
-    if val > 75:
-        return "🔴 Crisis"
-    elif val > 60:
-        return "🟠 High"
-    elif val > 40:
-        return "🟡 Moderate"
-    else:
-        return "🟢 Stable"
+# --- TOP SIGNALS ---
+st.subheader("🚨 Highest Risk Signals")
 
-df["Risk"] = df["Stress (%)"].apply(stress_label)
+top = df.sort_values(by="Signal", ascending=False).head(5)
 
-# --- ALERT SYSTEM ---
-alerts = df[df["Delta (%)"] > 15]
-
-if not alerts.empty:
-    st.error("🚨 ALERT: Rapid Stress Increase Detected")
-    st.dataframe(alerts[["Label", "Delta (%)"]], use_container_width=True)
-
-# --- TOP RISK ---
-st.subheader("🚨 Highest Risk Countries")
-
-top_risk = df.head(5)
-st.dataframe(
-    top_risk[["Label", "Stress (%)", "Risk"]],
-    use_container_width=True
-)
-
-with st.expander("ℹ️ Why this matters"):
-    st.write("""
-    Highest stress = early signals of instability.
-    
-    Clusters → contagion  
-    Spikes → crisis onset  
-    """)
+st.dataframe(top[["Label", "Signal (%)"]], use_container_width=True)
 
 # --- FULL TABLE ---
-st.subheader("🌍 Global Stress Table")
+st.subheader("🌍 Global Signal Table")
 
 st.dataframe(
-    df[["Label", "Stress (%)", "Delta (%)", "Risk"]],
+    df[["Label", "Signal (%)"]],
     use_container_width=True
 )
-
-with st.expander("ℹ️ Risk Guide"):
-    st.write("""
-    🔴 Crisis → extreme stress  
-    🟠 High → elevated risk  
-    🟟 Moderate → watch  
-    🟢 Stable → low risk  
-    """)
-
-# --- MOMENTUM ---
-st.subheader("📈 Stress Momentum")
-
-st.dataframe(
-    df[["Label", "Stress (%)", "Delta (%)"]],
-    use_container_width=True
-)
-
-with st.expander("ℹ️ Why momentum matters"):
-    st.write("""
-    Markets react to change, not levels.
-    
-    Rising stress = capital leaving  
-    Falling stress = stabilization  
-    
-    Large increases = early warning signal  
-    """)
 
 # --- CHART ---
-st.subheader("📊 Stress Distribution")
+st.subheader("📊 Signal Distribution")
 
-chart_df = df.set_index("Label")["Stress (%)"]
-st.bar_chart(chart_df)
+st.bar_chart(df.set_index("Label")["Signal (%)"])
+
+# --- EXPLANATION ---
+with st.expander("ℹ️ How signals work"):
+    st.write("""
+    This system combines:
+    
+    - macro stress  
+    - FX weakness  
+    - crypto flows  
+    - gold demand  
+    
+    Higher signal = higher probability of instability.
+    
+    > 75% = early warning  
+    """)
 
 # --- REFRESH ---
 if st.button("Refresh"):
