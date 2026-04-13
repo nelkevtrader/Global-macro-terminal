@@ -88,7 +88,20 @@ def btc_price():
     except:
         return None
 
-btc = btc_price()
+def btc_price():
+    urls = [
+        "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd"
+    ]
+
+    for url in urls:
+        try:
+            r = requests.get(url, timeout=10)
+            data = r.json()
+            return data["bitcoin"]["usd"]
+        except:
+            continue
+
+    return None
 
 # GOLD (proxy signal - until real feed added)
 gold = np.random.uniform(0.45, 0.9)
