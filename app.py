@@ -18,14 +18,14 @@ regime = data["regime"]
 df = pd.DataFrame(list(countries.items()), columns=["Country", "Stress"])
 df = df.sort_values(by="Stress", ascending=False)
 
-# --- HEADER METRICS ---
+# --- HEADER ---
 col1, col2 = st.columns(2)
 
 with col1:
     st.metric("Global Contagion Index (GCI)", gci)
     with st.expander("ℹ️ What is GCI?"):
         st.write("""
-        The Global Contagion Index measures average stress across all countries.
+        Measures global macro stress across countries.
         
         > 0.75 = Crisis  
         0.6–0.75 = Contagion  
@@ -37,28 +37,28 @@ with col2:
     st.metric("Regime", regime)
     with st.expander("ℹ️ What does this mean?"):
         st.write("""
-        - Stable → low volatility  
+        - Stable → calm conditions  
         - Regional Stress → localized issues  
-        - Contagion Stress → spreading instability  
-        - Crisis → global systemic risk  
+        - Contagion → spreading instability  
+        - Crisis → systemic risk  
         """)
 
 st.divider()
 
-# --- COLOR FUNCTION ---
-def color_stress(val):
+# --- COLOR LABEL FUNCTION ---
+def stress_label(val):
     if val > 0.75:
-        return 'background-color: red; color: white'
+        return "🔴 Crisis"
     elif val > 0.6:
-        return 'background-color: orange'
+        return "🟠 High"
     elif val > 0.4:
-        return 'background-color: yellow'
+        return "🟡 Moderate"
     else:
-        return 'background-color: green; color: white'
+        return "🟢 Stable"
 
-styled_df = df.style.applymap(color_stress, subset=["Stress"])
+df["Risk"] = df["Stress"].apply(stress_label)
 
-# --- TOP RISK COUNTRIES ---
+# --- TOP RISK ---
 st.subheader("🚨 Highest Risk Countries")
 
 top_risk = df.head(5)
@@ -66,31 +66,30 @@ st.dataframe(top_risk, use_container_width=True)
 
 with st.expander("ℹ️ Why this matters"):
     st.write("""
-    These are the countries under the highest stress right now.
+    Highest stress = early signals of instability.
     
-    Watch for:
-    - clusters → contagion risk  
-    - sudden spikes → early crisis signal  
+    Clusters → contagion  
+    Spikes → crisis onset  
     """)
 
-# --- FULL HEATMAP TABLE ---
-st.subheader("🌍 Global Stress Heatmap")
+# --- FULL TABLE ---
+st.subheader("🌍 Global Stress Table")
 
-st.dataframe(styled_df, use_container_width=True)
+st.dataframe(df, use_container_width=True)
 
-with st.expander("ℹ️ Color Guide"):
+with st.expander("ℹ️ Risk Guide"):
     st.write("""
-    🔴 Red → Crisis  
-    🟠 Orange → High stress  
-    🟡 Yellow → Moderate  
-    🟢 Green → Stable  
+    🔴 Crisis → extreme stress  
+    🟠 High → elevated risk  
+    🟡 Moderate → watch  
+    🟢 Stable → low risk  
     """)
 
 # --- CHART ---
 st.subheader("📊 Stress Distribution")
 
-st.bar_chart(df.set_index("Country"))
+st.bar_chart(df.set_index("Country")["Stress"])
 
-# --- REFRESH BUTTON ---
+# --- REFRESH ---
 if st.button("Refresh"):
     st.rerun()
