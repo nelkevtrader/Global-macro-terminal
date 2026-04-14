@@ -4,19 +4,19 @@ import numpy as np
 import requests
 
 st.set_page_config(layout="wide")
-st.title("🌍 Macro Quant Model v1 — Deterministic Engine")
+st.title("🌍 Macro Quant Model v2 — Regime + Contagion Engine")
 
 # =========================================================
-# BASE STRUCTURE (NO RANDOMNESS)
+# CORE UNIVERSE (DETERMINISTIC BASE)
 # =========================================================
 BASE = {
-    "EGP": 0.80, "TRY": 0.78, "ARS": 0.85,
-    "NGN": 0.74, "ZAR": 0.55, "PKR": 0.76,
-    "LKR": 0.70, "GHS": 0.62, "KES": 0.60,
-    "USD": 0.30, "EUR": 0.35, "JPY": 0.40,
-    "GBP": 0.38, "CNY": 0.45, "INR": 0.52,
-    "BRL": 0.58, "MXN": 0.50, "RUB": 0.77,
-    "IDR": 0.49, "VND": 0.47
+    "EGP": 0.82, "TRY": 0.80, "ARS": 0.88,
+    "NGN": 0.76, "ZAR": 0.56, "PKR": 0.78,
+    "LKR": 0.72, "GHS": 0.64, "KES": 0.61,
+    "USD": 0.30, "EUR": 0.36, "JPY": 0.42,
+    "GBP": 0.39, "CNY": 0.46, "INR": 0.53,
+    "BRL": 0.59, "MXN": 0.51, "RUB": 0.79,
+    "IDR": 0.50, "VND": 0.48
 }
 
 NAME = {
@@ -30,64 +30,102 @@ NAME = {
 }
 
 # =========================================================
-# FX STRESS FACTOR (STABLE MODEL)
+# STRUCTURAL MACRO DRIVERS (NEW IN V2)
 # =========================================================
-FX_IMPACT = {
+
+# Inflation pressure proxy (deterministic structural bias)
+INFLATION_BIAS = {
+    "EGP": 1.25, "TRY": 1.30, "ARS": 1.35,
+    "NGN": 1.20, "ZAR": 1.05, "PKR": 1.18,
+    "LKR": 1.15, "GHS": 1.10, "KES": 1.08,
+    "USD": 0.95, "EUR": 0.96, "JPY": 0.97,
+    "GBP": 0.94, "CNY": 0.98, "INR": 1.00,
+    "BRL": 1.06, "MXN": 1.02, "RUB": 1.28,
+    "IDR": 0.99, "VND": 0.98
+}
+
+# Liquidity stress (global dollar sensitivity)
+LIQUIDITY_BIAS = {
     "EGP": 1.20, "TRY": 1.18, "ARS": 1.25,
     "NGN": 1.15, "ZAR": 1.05, "PKR": 1.14,
-    "LKR": 1.10, "GHS": 1.08, "KES": 1.06,
-    "USD": 0.90, "EUR": 0.92, "JPY": 0.93,
-    "GBP": 0.91, "CNY": 0.95, "INR": 1.00,
-    "BRL": 1.03, "MXN": 0.99, "RUB": 1.17,
+    "LKR": 1.12, "GHS": 1.08, "KES": 1.06,
+    "USD": 0.85, "EUR": 0.90, "JPY": 0.88,
+    "GBP": 0.89, "CNY": 0.92, "INR": 0.98,
+    "BRL": 1.03, "MXN": 1.00, "RUB": 1.22,
     "IDR": 0.97, "VND": 0.96
 }
 
+# FX vulnerability (structural)
+FX_BIAS = {
+    "EGP": 1.25, "TRY": 1.22, "ARS": 1.30,
+    "NGN": 1.18, "ZAR": 1.05, "PKR": 1.17,
+    "LKR": 1.12, "GHS": 1.10, "KES": 1.07,
+    "USD": 0.90, "EUR": 0.92, "JPY": 0.93,
+    "GBP": 0.91, "CNY": 0.95, "INR": 1.00,
+    "BRL": 1.04, "MXN": 1.01, "RUB": 1.24,
+    "IDR": 0.98, "VND": 0.97
+}
+
 # =========================================================
-# STRESS ENGINE (CORE MODEL)
+# MULTI-FACTOR STRESS ENGINE
 # =========================================================
-def stress_model(base, ccy):
-    fx = FX_IMPACT.get(ccy, 1.0)
-    return base * fx
+def stress(ccy):
+    base = BASE[ccy]
+    inf = INFLATION_BIAS[ccy]
+    liq = LIQUIDITY_BIAS[ccy]
+    fx = FX_BIAS[ccy]
+
+    # weighted macro model (deterministic)
+    return base * (0.4*inf + 0.35*liq + 0.25*fx)
 
 rows = []
-for ccy, base in BASE.items():
-    s = stress_model(base, ccy)
+for ccy in BASE:
+    s = stress(ccy)
     rows.append([ccy, NAME.get(ccy, ccy), s])
 
 df = pd.DataFrame(rows, columns=["Currency", "Country", "Stress"])
 
-# Normalize (quant-style scaling)
+# =========================================================
+# NORMALIZATION (IMPORTANT FIX)
+# =========================================================
 df["Stress Score"] = (df["Stress"] * 100).round(2)
 
-# Rank system (IMPORTANT FIX FOR STABILITY)
 df = df.sort_values("Stress Score", ascending=False).reset_index(drop=True)
 
-# Delta is deterministic (rank-based)
+# deterministic delta (rank-based)
 df["Delta"] = df["Stress Score"].diff().fillna(0).round(2)
 
 # =========================================================
-# SIGNAL MODEL (MULTI-FACTOR QUANT STYLE)
+# SIGNAL ENGINE (MULTI-LAYER)
 # =========================================================
 df["Signal"] = (
-    df["Stress Score"] * 0.6 +
-    df["Delta"].abs() * 0.4
+    df["Stress Score"] * 0.55 +
+    df["Delta"].abs() * 0.25 +
+    (df["Stress Score"].rolling(3).mean().fillna(df["Stress Score"])) * 0.20
 )
 
 df["Signal"] = df["Signal"].clip(0, 100).round(2)
 
 # =========================================================
-# RISK REGIME CLASSIFICATION
+# CONTAGION ENGINE (NEW IN V2)
 # =========================================================
-def risk(x):
-    if x > 75:
-        return "🔴 Risk-Off Extreme"
-    elif x > 60:
-        return "🟠 Risk-Off"
-    elif x > 40:
-        return "🟡 Neutral"
-    return "🟢 Risk-On"
+global_pressure = df["Stress Score"].mean()
 
-df["Regime"] = df["Signal"].apply(risk)
+df["Contagion"] = (df["Stress Score"] - global_pressure).abs().round(2)
+
+# =========================================================
+# REGIME ENGINE (NEW IN V2)
+# =========================================================
+def regime(x):
+    if x > 75:
+        return "🔴 Crisis Regime"
+    elif x > 60:
+        return "🟠 Stress Regime"
+    elif x > 45:
+        return "🟡 Transition"
+    return "🟢 Stable"
+
+df["Regime"] = df["Signal"].apply(regime)
 
 # =========================================================
 # CROSS-ASSET ANCHORS
@@ -114,16 +152,18 @@ btc = get_btc()
 gold = get_gold()
 
 # =========================================================
-# GLOBAL MACRO RISK INDEX (CMRI)
+# MACRO RISK INDEX (CMRI v2)
 # =========================================================
 cmri = df["Signal"].mean().round(2)
 
 if cmri > 70:
-    regime = "🔴 Global Risk-Off"
-elif cmri > 50:
-    regime = "🟠 Elevated Risk"
+    macro_regime = "🔴 Global Risk-Off"
+elif cmri > 55:
+    macro_regime = "🟠 Elevated Risk"
+elif cmri > 40:
+    macro_regime = "🟡 Neutral"
 else:
-    regime = "🟢 Stable Macro Regime"
+    macro_regime = "🟢 Risk-On"
 
 # =========================================================
 # HEADER
@@ -131,7 +171,7 @@ else:
 c1, c2, c3, c4 = st.columns(4)
 
 with c1:
-    st.metric("CMRI", cmri)
+    st.metric("CMRI v2", cmri)
 
 with c2:
     st.metric("BTC", f"${btc:,.0f}" if btc else "N/A")
@@ -140,40 +180,40 @@ with c3:
     st.metric("Gold", f"${gold:,.0f}" if gold else "N/A")
 
 with c4:
-    st.metric("Regime", regime)
+    st.metric("Macro Regime", macro_regime)
 
 st.divider()
 
 # =========================================================
 # TOP RISKS
 # =========================================================
-st.subheader("🚨 Macro Risk Leaders")
+st.subheader("🚨 Systemic Risk Leaders")
 
 st.dataframe(
-    df.head(7)[["Currency","Country","Stress Score","Signal","Regime"]],
+    df.head(7)[["Currency","Country","Stress Score","Signal","Regime","Contagion"]],
     use_container_width=True
 )
 
 # =========================================================
 # FULL MODEL
 # =========================================================
-st.subheader("🌍 Macro Quant Map")
+st.subheader("🌍 Macro Quant Map v2")
 
 st.dataframe(
-    df[["Currency","Country","Stress Score","Delta","Signal","Regime"]],
+    df[["Currency","Country","Stress Score","Delta","Signal","Regime","Contagion"]],
     use_container_width=True
 )
 
 # =========================================================
 # STABLE CHART
 # =========================================================
-st.subheader("📊 Risk Distribution")
+st.subheader("📊 Systemic Stress Distribution")
 
 st.bar_chart(df.set_index("Country")["Signal"])
 
 # =========================================================
-# EXPLANATION
+# FOOTER INSIGHT
 # =========================================================
 st.caption(
-    "Macro Quant Model v1: deterministic factor-based stress model with regime classification and cross-asset anchors."
+    "v2 adds inflation + liquidity + FX structural stress + contagion + regime transitions. Fully deterministic model."
 )
