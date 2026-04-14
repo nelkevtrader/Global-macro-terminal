@@ -1,16 +1,14 @@
 import streamlit as st
 import requests
 import pandas as pd
-import numpy as np
 
 st.set_page_config(layout="wide")
-
-st.title("🌍 Global Macro Stress Terminal")
+st.title("🌍 Global Macro Stress Terminal (Real Data)")
 
 # =========================
-# API SOURCE
+# API
 # =========================
-API = "https://global-macro-terminal-1.onrender.com/global-state"
+MACRO_API = "https://global-macro-terminal-1.onrender.com/global-state"
 
 # =========================
 # COUNTRY MAP
@@ -41,7 +39,7 @@ currency_map = {
 # =========================
 # LOAD MACRO DATA
 # =========================
-data = requests.get(API).json()
+data = requests.get(MACRO_API).json()
 
 df = pd.DataFrame(list(data["countries"].items()), columns=["Currency", "Stress"])
 
@@ -51,33 +49,20 @@ df["Label"] = df["Currency"] + " - " + df["Country"]
 df = df.sort_values(by="Stress", ascending=False)
 
 # =========================
-# MOMENTUM (DELTA)
+# REAL FX DATA
 # =========================
-df["Prev_Stress"] = df["Stress"] + np.random.normal(0, 0.05, len(df))
-df["Delta"] = df["Stress"] - df["Prev_Stress"]
+@st.cache_data(ttl=300)
+def get_fx():
+    try:
+        url = "https://open.er-api.com/v6/latest/USD"
+        return requests.get(url).json()["rates"]
+    except:
+        return {}
+
+fx_rates = get_fx()
 
 # =========================
-# PERCENT FORMAT
-# =========================
-df["Stress (%)"] = (df["Stress"] * 100).round(1)
-df["Delta (%)"] = (df["Delta"] * 100).round(1)
-
-# =========================
-# RISK ENGINE
-# =========================
-def risk(x):
-    if x > 75:
-        return "🔴 Crisis"
-    elif x > 60:
-        return "🟠 High"
-    elif x > 40:
-        return "🟡 Moderate"
-    return "🟢 Stable"
-
-df["Risk"] = df["Stress (%)"].apply(risk)
-
-# =========================
-# BTC (ROBUST + CACHED)
+# REAL BTC
 # =========================
 @st.cache_data(ttl=60)
 def get_btc():
@@ -91,22 +76,69 @@ def get_btc():
 btc = get_btc()
 
 # =========================
-# MARKET PROXIES (CLEARLY LABELLED)
+# REAL GOLD (via metals API proxy)
 # =========================
-gold_signal = np.random.uniform(0.45, 0.9)   # proxy only
-fx_pressure = np.random.uniform(0.3, 0.8)    # proxy only
+@st.cache_data(ttl=300)
+def get_gold():
+    try:
+        url = "https://api.metals.live/v1/spot"
+        data = requests.get(url).json()
+        for item in data:
+            if "gold" in item:
+                return item["gold"]
+    except:
+        return None
+
+gold = get_gold()
 
 # =========================
-# SIGNAL ENGINE
+# MOMENTUM (REAL PROXY)
 # =========================
-df["Signal"] = (
-    df["Stress"] * 0.5 +
-    fx_pressure * 0.2 +
-    gold_signal * 0.15 +
-    np.random.uniform(0, 0.15, len(df))
-)
+df["Delta (%)"] = (df["Stress"].diff().fillna(0) * 100).round(1)
+df["Stress (%)"] = (df["Stress"] * 100).round(1)
 
-df["Signal (%)"] = (df["Signal"] * 100).round(1)
+# =========================
+# FX MOVEMENT SIGNAL
+# =========================
+def fx_signal(currency):
+    try:
+        if currency in fx_rates:
+            return abs(1 - fx_rates[currency]) * 100
+        return 0
+    except:
+        return 0
+
+df["FX Signal"] = df["Currency"].apply(fx_signal)
+
+# =========================
+# GOLD + BTC SIGNALS
+# =========================
+gold_signal = 0 if not gold else min(100, (gold / 2000) * 100)
+btc_signal = 0 if not btc else min(100, (btc / 100000) * 100)
+
+# =========================
+# FINAL SIGNAL ENGINE (REAL)
+# =========================
+df["Signal (%)"] = (
+    df["Stress (%)"] * 0.5 +
+    df["FX Signal"] * 0.3 +
+    gold_signal * 0.1 +
+    btc_signal * 0.1
+).round(1)
+
+# =========================
+# RISK LABEL
+# =========================
+def risk(val):
+    if val > 75:
+        return "🔴 Crisis"
+    elif val > 60:
+        return "🟠 High"
+    elif val > 40:
+        return "🟡 Moderate"
+    return "🟢 Stable"
+
+df["Risk"] = df["Signal (%)"].apply(risk)
 
 # =========================
 # ALERTS
@@ -114,19 +146,19 @@ df["Signal (%)"] = (df["Signal"] * 100).round(1)
 alerts = df[df["Signal (%)"] > 75]
 
 if not alerts.empty:
-    st.error("🚨 EARLY WARNING: Elevated Macro Stress Detected")
+    st.error("🚨 EARLY WARNING: Real Market Stress Detected")
     st.dataframe(alerts[["Label", "Signal (%)"]], use_container_width=True)
 
 # =========================
-# HEADER METRICS
+# HEADER
 # =========================
 col1, col2, col3 = st.columns(3)
 
 with col1:
-    st.metric("Bitcoin (USD)", f"${btc:,}" if btc else "N/A")
+    st.metric("Bitcoin", f"${btc:,}" if btc else "N/A")
 
 with col2:
-    st.metric("Gold Signal (proxy)", f"{round(gold_signal*100,1)}%")
+    st.metric("Gold (USD)", f"${gold}" if gold else "N/A")
 
 with col3:
     st.metric("Regime", data["regime"])
@@ -139,51 +171,39 @@ st.divider()
 st.subheader("🚨 Highest Risk Countries")
 
 st.dataframe(
-    df.sort_values("Signal (%)", ascending=False).head(5)[
-        ["Label", "Stress (%)", "Signal (%)", "Risk"]
-    ],
+    df.sort_values("Signal (%)", ascending=False)
+    [["Label", "Stress (%)", "Signal (%)", "Risk"]]
+    .head(5)
+    .reset_index(drop=True),
     use_container_width=True
 )
-
-with st.expander("ℹ️ Interpretation"):
-    st.write("""
-    High signal values indicate combined macro + market stress.
-    
-    Often precedes:
-    - FX instability  
-    - capital flight  
-    - policy intervention  
-    """)
 
 # =========================
 # FULL TABLE
 # =========================
 st.subheader("🌍 Global Macro Table")
 
-display_df = df[[
+display = df[[
     "Label",
     "Stress (%)",
     "Delta (%)",
+    "FX Signal",
     "Signal (%)",
     "Risk"
 ]]
 
-st.dataframe(display_df, use_container_width=True)
-
-with st.expander("ℹ️ Column meanings"):
-    st.write("""
-    Stress (%) → macro pressure  
-    Delta (%) → change in stress  
-    Signal (%) → combined risk model  
-    Risk → classification level  
-    """)
+st.dataframe(display.reset_index(drop=True), use_container_width=True)
 
 # =========================
-# MOMENTUM VIEW
+# MOMENTUM
 # =========================
 st.subheader("📈 Stress Momentum")
 
-st.dataframe(df[["Label", "Stress (%)", "Delta (%)"]], use_container_width=True)
+st.dataframe(
+    df[["Label", "Stress (%)", "Delta (%)"]]
+    .reset_index(drop=True),
+    use_container_width=True
+)
 
 # =========================
 # CHART
@@ -191,6 +211,21 @@ st.dataframe(df[["Label", "Stress (%)", "Delta (%)"]], use_container_width=True)
 st.subheader("📊 Signal Distribution")
 
 st.bar_chart(df.set_index("Label")["Signal (%)"])
+
+# =========================
+# INFO
+# =========================
+with st.expander("ℹ️ How this works"):
+    st.write("""
+    This system now uses REAL DATA:
+    
+    - Macro stress model  
+    - Live FX rates  
+    - Bitcoin price  
+    - Gold price  
+    
+    Signal = combined real-world stress indicator.
+    """)
 
 # =========================
 # REFRESH
