@@ -115,21 +115,34 @@ btc_price, btc_spread, btc_conf = get_btc_sources()
 # GOLD (multi-source reconciliation)
 # =========================
 def get_gold_sources():
-    g1 = safe_get("https://query1.finance.yahoo.com/v7/finance/quote", {"symbols":"GC=F"})
-    g2 = safe_get("https://api.metals.live/v1/spot")
-
     v1 = None
     v2 = None
 
+    # -------------------------
+    # SOURCE 1: Yahoo Finance
+    # -------------------------
     try:
-        v1 = g1["quoteResponse"]["result"][0]["regularMarketPrice"]
+        url = "https://query1.finance.yahoo.com/v7/finance/quote"
+        r = requests.get(url, params={"symbols": "GC=F"}, timeout=5)
+        data = r.json()
+
+        result = data.get("quoteResponse", {}).get("result", [])
+        if result:
+            v1 = float(result[0].get("regularMarketPrice"))
     except:
         pass
+    return reconcile([v1, v2])
 
+    # -------------------------
+    # SOURCE 2: Stooq (very stable)
+    # -------------------------
     try:
-        for i in g2:
-            if isinstance(i, dict) and "gold" in i:
-                v2 = float(i["gold"])
+        r = requests.get("https://stooq.com/q/l/?s=xauusd&i=d", timeout=5)
+        lines = r.text.split("\n")
+
+        if len(lines) > 1:
+            parts = lines[1].split(",")
+            v2 = float(parts[3])  # Close price
     except:
         pass
 
