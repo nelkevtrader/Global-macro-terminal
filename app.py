@@ -10,7 +10,7 @@ st.title("🌍 Global Macro Stress Terminal")
 API = "https://global-macro-terminal-1.onrender.com/global-state"
 
 # =========================
-# SAFE REQUEST FUNCTION
+# SAFE REQUEST
 # =========================
 def safe_get(url, params=None, retries=3):
     for _ in range(retries):
@@ -48,14 +48,11 @@ df["Label"] = df["Currency"] + " - " + df["Country"]
 
 df = df.sort_values(by="Stress", ascending=False)
 
-# =========================
-# FORMAT
-# =========================
 df["Stress (%)"] = (df["Stress"] * 100).round(2)
 df["Delta (%)"] = (df["Stress"].diff().fillna(0) * 100).round(2)
 
 # =========================
-# FX DATA (RESILIENT)
+# FX DATA (FIXED)
 # =========================
 @st.cache_data(ttl=300)
 def get_fx():
@@ -80,61 +77,49 @@ def fx_move(currency):
 df["FX Move (%)"] = df["Currency"].apply(fx_move).round(2)
 
 # =========================
-# BTC (RESILIENT)
+# BTC (ROBUST)
 # =========================
 @st.cache_data(ttl=60)
 def get_btc():
-    urls = [
+    sources = [
         ("https://api.coingecko.com/api/v3/simple/price", {"ids":"bitcoin","vs_currencies":"usd"}),
         ("https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT", None)
     ]
-
-    for url, params in urls:
+    for url, params in sources:
         r = safe_get(url, params)
         if r:
             try:
-                data = r.json()
-                if "bitcoin" in data:
-                    return float(data["bitcoin"]["usd"])
-                if "price" in data:
-                    return float(data["price"])
+                j = r.json()
+                if "bitcoin" in j:
+                    return float(j["bitcoin"]["usd"])
+                if "price" in j:
+                    return float(j["price"])
             except:
                 continue
-
-    return 30000.0  # fallback
+    return 30000.0
 
 # =========================
-# GOLD (RESILIENT)
+# GOLD (YAHOO FIX)
 # =========================
 @st.cache_data(ttl=300)
 def get_gold():
-    # Primary
-    r = safe_get("https://api.metals.live/v1/spot")
-    if r:
-        try:
-            data = r.json()
-            for item in data:
-                if isinstance(item, dict) and "gold" in item:
-                    return float(item["gold"])
-        except:
-            pass
+    try:
+        url = "https://query1.finance.yahoo.com/v7/finance/quote?symbols=GC=F"
+        r = safe_get(url)
+        if r:
+            price = r.json()["quoteResponse"]["result"][0]["regularMarketPrice"]
+            if 1000 < price < 4000:  # sanity check
+                return float(price)
+    except:
+        pass
 
-    # Backup (Stooq)
-    r = safe_get("https://stooq.com/q/l/?s=xauusd&i=d")
-    if r:
-        try:
-            row = r.text.split("\n")[1].split(",")
-            return float(row[3])
-        except:
-            pass
-
-    return 2000.0  # final fallback
+    return 2000.0  # fallback
 
 btc = get_btc()
 gold = get_gold()
 
 # =========================
-# SIGNAL MODEL (STABLE)
+# SIGNAL MODEL (CLEAN)
 # =========================
 df["Signal (%)"] = (
     df["Stress (%)"] * 0.6 +
@@ -176,7 +161,7 @@ with c1:
     st.metric("Bitcoin", f"${btc:,.0f}")
 
 with c2:
-    st.metric("Gold", f"${gold:,.0f}")
+    st.metric("Gold (Futures)", f"${gold:,.0f}")
 
 with c3:
     st.metric("Regime", data["regime"])
@@ -184,7 +169,7 @@ with c3:
 st.divider()
 
 # =========================
-# EXPLANATIONS
+# INFO
 # =========================
 with st.expander("ℹ️ Column Explanations"):
     st.write("""
@@ -200,10 +185,10 @@ with st.expander("ℹ️ Column Explanations"):
 # =========================
 st.subheader("🚨 Highest Risk Countries")
 
-top = df.sort_values("Signal (%)", ascending=False).head(5)
-
 st.dataframe(
-    top[["Label","Stress (%)","Signal (%)","Crash Risk"]]
+    df.sort_values("Signal (%)", ascending=False)
+    [["Label","Stress (%)","Signal (%)","Crash Risk"]]
+    .head(5)
     .reset_index(drop=True),
     use_container_width=True
 )
