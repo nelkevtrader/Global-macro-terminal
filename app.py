@@ -5,13 +5,13 @@ import numpy as np
 import time
 
 st.set_page_config(layout="wide")
-st.title("🌍 Global Macro Stress Terminal")
+st.title("🌍 Global Macro Stress Terminal — Data Reconciled")
 
 API = "https://global-macro-terminal-1.onrender.com/global-state"
 
-# ----------------------------
+# =========================
 # SAFE REQUEST
-# ----------------------------
+# =========================
 def safe_get(url, params=None):
     try:
         r = requests.get(url, params=params, timeout=5)
@@ -21,16 +21,39 @@ def safe_get(url, params=None):
         pass
     return None
 
-# ----------------------------
+# =========================
+# RECONCILIATION ENGINE
+# =========================
+def reconcile(values, tolerance=0.25):
+    """
+    Takes multiple numeric sources and:
+    - removes None
+    - checks spread
+    - returns median + confidence
+    """
+    vals = [v for v in values if v is not None]
+    if len(vals) == 0:
+        return None, 0.0, "NO DATA"
+
+    median = np.median(vals)
+    spread = (max(vals) - min(vals)) / median if median != 0 else 1
+
+    if spread < tolerance:
+        confidence = "HIGH"
+    elif spread < 0.6:
+        confidence = "MEDIUM"
+    else:
+        confidence = "LOW (DATA CONFLICT)"
+
+    return float(median), spread, confidence
+
+# =========================
 # LOAD MACRO DATA
-# ----------------------------
+# =========================
 data = safe_get(API) or {"countries": {}, "regime": "Unknown"}
 
 df = pd.DataFrame(list(data["countries"].items()), columns=["Currency", "Stress"])
 
-# ----------------------------
-# COUNTRY MAP
-# ----------------------------
 currency_map = {
     "EGP": "Egypt","TRY": "Turkey","ARS": "Argentina",
     "NGN": "Nigeria","ZAR": "South Africa","PKR": "Pakistan",
@@ -44,139 +67,150 @@ currency_map = {
 df["Country"] = df["Currency"].map(currency_map).fillna(df["Currency"])
 df["Label"] = df["Currency"] + " - " + df["Country"]
 
-df = df.sort_values(by="Stress", ascending=False)
+df = df.sort_values("Stress", ascending=False)
 
-# ----------------------------
-# BASIC METRICS
-# ----------------------------
-df["Stress (%)"] = (df["Stress"] * 100).round(1)
+df["Stress (%)"] = (df["Stress"] * 100).round(2)
+df["Delta (%)"] = df["Stress"].diff().fillna(0) * 100
 
-# Simple momentum (no fake randomness)
-df["Delta (%)"] = df["Stress (%)"].diff().fillna(0).round(1)
-
-# ----------------------------
-# FX DATA (STABLE USE)
-# ----------------------------
-@st.cache_data(ttl=300)
-def get_fx():
-    data = safe_get("https://open.er-api.com/v6/latest/USD")
-    return data["rates"] if data else {}
-
-fx = get_fx()
+# =========================
+# FX (single source + sanity band)
+# =========================
+fx_raw = safe_get("https://open.er-api.com/v6/latest/USD")
+fx = fx_raw["rates"] if fx_raw else {}
 
 def fx_move(currency):
-    val = fx.get(currency)
-    if not val:
-        return 0
-    # normalize around reasonable range
-    move = abs(val - 1) * 100
-    return min(move, 20)  # cap to avoid distortion
-
-df["FX Move (%)"] = df["Currency"].apply(fx_move).round(1)
-
-# ----------------------------
-# BTC (CLEAN)
-# ----------------------------
-@st.cache_data(ttl=60)
-def get_btc():
-    data = safe_get(
-        "https://api.coingecko.com/api/v3/simple/price",
-        {"ids": "bitcoin", "vs_currencies": "usd"}
-    )
-    try:
-        return float(data["bitcoin"]["usd"])
-    except:
+    v = fx.get(currency)
+    if not v:
         return None
+    move = abs(np.log(v)) * 10
+    return min(move, 100)
 
-# ----------------------------
-# GOLD (FIXED PROPERLY)
-# ----------------------------
-@st.cache_data(ttl=300)
-def get_gold():
-    data = safe_get(
-        "https://query1.finance.yahoo.com/v7/finance/quote",
-        {"symbols": "GC=F"}
-    )
+df["FX Move (%)"] = df["Currency"].apply(fx_move)
+
+# =========================
+# BTC (multi-source reconciliation)
+# =========================
+def get_btc_sources():
+    c1 = safe_get("https://api.coingecko.com/api/v3/simple/price", {"ids":"bitcoin","vs_currencies":"usd"})
+    c2 = safe_get("https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT")
+
+    v1 = None
+    v2 = None
+
     try:
-        price = data["quoteResponse"]["result"][0]["regularMarketPrice"]
-        if 1500 < price < 3000:
-            return float(price)
+        v1 = c1["bitcoin"]["usd"]
     except:
         pass
-    return None
 
-btc = get_btc()
-gold = get_gold()
+    try:
+        v2 = float(c2["price"])
+    except:
+        pass
 
-# ----------------------------
-# SIGNAL (SIMPLE + REALISTIC)
-# ----------------------------
+    return reconcile([v1, v2])
+
+btc_price, btc_spread, btc_conf = get_btc_sources()
+
+# =========================
+# GOLD (multi-source reconciliation)
+# =========================
+def get_gold_sources():
+    g1 = safe_get("https://query1.finance.yahoo.com/v7/finance/quote", {"symbols":"GC=F"})
+    g2 = safe_get("https://api.metals.live/v1/spot")
+
+    v1 = None
+    v2 = None
+
+    try:
+        v1 = g1["quoteResponse"]["result"][0]["regularMarketPrice"]
+    except:
+        pass
+
+    try:
+        for i in g2:
+            if isinstance(i, dict) and "gold" in i:
+                v2 = float(i["gold"])
+    except:
+        pass
+
+    return reconcile([v1, v2])
+
+gold_price, gold_spread, gold_conf = get_gold_sources()
+
+# =========================
+# SIGNAL MODEL
+# =========================
 df["Signal (%)"] = (
-    df["Stress (%)"] * 0.7 +
+    df["Stress (%)"] * 0.65 +
     abs(df["Delta (%)"]) * 0.2 +
-    df["FX Move (%)"] * 0.1
-).round(1)
+    df["FX Move (%)"].fillna(0) * 0.15
+)
 
-df["Signal (%)"] = df["Signal (%)"].clip(0, 100)
+df["Signal (%)"] = df["Signal (%)"].clip(0,100).round(2)
 
-# ----------------------------
+# =========================
 # RISK
-# ----------------------------
-def risk(val):
-    if val > 70:
+# =========================
+def risk(x):
+    if x > 75:
         return "🔴 High Risk"
-    elif val > 55:
+    elif x > 60:
         return "🟠 Warning"
-    elif val > 35:
+    elif x > 40:
         return "🟡 Elevated"
     return "🟢 Stable"
 
 df["Risk"] = df["Signal (%)"].apply(risk)
 
-# ----------------------------
+# =========================
+# DATA QUALITY PANEL
+# =========================
+st.subheader("🧠 Data Reconciliation Layer")
+
+st.write("### BTC")
+st.write(f"Price: {btc_price}")
+st.write(f"Spread: {btc_spread:.2f}")
+st.write(f"Confidence: {btc_conf}")
+
+st.write("### GOLD")
+st.write(f"Price: {gold_price}")
+st.write(f"Spread: {gold_spread:.2f}")
+st.write(f"Confidence: {gold_conf}")
+
+st.divider()
+
+# =========================
 # HEADER
-# ----------------------------
+# =========================
 c1, c2, c3 = st.columns(3)
 
 with c1:
-    st.metric("Bitcoin", f"${btc:,.0f}" if btc else "N/A")
+    st.metric("Bitcoin", f"${btc_price:,.0f}" if btc_price else "N/A")
 
 with c2:
-    st.metric("Gold", f"${gold:,.0f}" if gold else "N/A")
+    st.metric("Gold", f"${gold_price:,.0f}" if gold_price else "N/A")
 
 with c3:
     st.metric("Regime", data["regime"])
 
 st.divider()
 
-# ----------------------------
-# EXPLANATION
-# ----------------------------
-with st.expander("ℹ️ How to read this"):
-    st.write("""
-    Stress (%) → macro stress level  
-    Delta (%) → recent change  
-    FX Move (%) → currency pressure vs USD  
-    Signal (%) → combined risk score  
-    Risk → classification  
-    """)
-
-# ----------------------------
+# =========================
 # TOP RISK
-# ----------------------------
+# =========================
 st.subheader("🚨 Highest Risk Countries")
 
 st.dataframe(
     df.sort_values("Signal (%)", ascending=False)
-    [["Label", "Stress (%)", "Signal (%)", "Risk"]]
+    [["Label","Stress (%)","Signal (%)","Risk"]]
     .head(5)
     .reset_index(drop=True),
     use_container_width=True
 )
 
-# ----------------------------
+# =========================
 # FULL TABLE
-# ----------------------------
+# =========================
 st.subheader("🌍 Global Macro Table")
 
 st.dataframe(
@@ -185,15 +219,14 @@ st.dataframe(
     use_container_width=True
 )
 
-# ----------------------------
+# =========================
 # CHART
-# ----------------------------
+# =========================
 st.subheader("📊 Signal Distribution")
-
 st.bar_chart(df.set_index("Label")["Signal (%)"])
 
-# ----------------------------
+# =========================
 # REFRESH
-# ----------------------------
+# =========================
 if st.button("Refresh"):
     st.rerun()
