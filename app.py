@@ -2,54 +2,52 @@ import streamlit as st
 import requests
 import pandas as pd
 import numpy as np
-import time
 
 st.set_page_config(layout="wide")
-st.title("🌍 Global Macro Stress Terminal — Data Reconciled")
+st.title("🌍 Global Macro Stress Terminal (Stable + Reconciled)")
 
 API = "https://global-macro-terminal-1.onrender.com/global-state"
 
-# =========================
+# =========================================================
 # SAFE REQUEST
-# =========================
+# =========================================================
 def safe_get(url, params=None):
     try:
-        r = requests.get(url, params=params, timeout=5)
+        r = requests.get(url, params=params, timeout=6)
         if r.status_code == 200:
             return r.json()
     except:
         pass
     return None
 
-# =========================
+# =========================================================
 # RECONCILIATION ENGINE
-# =========================
-def reconcile(values, tolerance=0.25):
-    """
-    Takes multiple numeric sources and:
-    - removes None
-    - checks spread
-    - returns median + confidence
-    """
-    vals = [v for v in values if v is not None]
+# =========================================================
+def reconcile(values):
+    vals = [v for v in values if isinstance(v, (int, float))]
+
     if len(vals) == 0:
-        return None, 0.0, "NO DATA"
+        return None, None, "NO DATA"
 
-    median = np.median(vals)
-    spread = (max(vals) - min(vals)) / median if median != 0 else 1
+    median = float(np.median(vals))
 
-    if spread < tolerance:
-        confidence = "HIGH"
-    elif spread < 0.6:
-        confidence = "MEDIUM"
+    if len(vals) > 1:
+        spread = float(np.std(vals) / median)
     else:
-        confidence = "LOW (DATA CONFLICT)"
+        spread = 0.0
 
-    return float(median), spread, confidence
+    if spread < 0.01:
+        conf = "HIGH"
+    elif spread < 0.05:
+        conf = "MEDIUM"
+    else:
+        conf = "LOW (DISAGREEMENT)"
 
-# =========================
+    return median, spread, conf
+
+# =========================================================
 # LOAD MACRO DATA
-# =========================
+# =========================================================
 data = safe_get(API) or {"countries": {}, "regime": "Unknown"}
 
 df = pd.DataFrame(list(data["countries"].items()), columns=["Currency", "Stress"])
@@ -70,114 +68,98 @@ df["Label"] = df["Currency"] + " - " + df["Country"]
 df = df.sort_values("Stress", ascending=False)
 
 df["Stress (%)"] = (df["Stress"] * 100).round(2)
-df["Delta (%)"] = df["Stress"].diff().fillna(0) * 100
+df["Delta (%)"] = (df["Stress"].diff().fillna(0) * 100).round(2)
 
-# =========================
-# FX (single source + sanity band)
-# =========================
+# =========================================================
+# FX MOVE
+# =========================================================
 fx_raw = safe_get("https://open.er-api.com/v6/latest/USD")
 fx = fx_raw["rates"] if fx_raw else {}
 
 def fx_move(currency):
-    v = fx.get(currency)
-    if not v:
+    val = fx.get(currency)
+    if not val:
         return None
-    move = abs(np.log(v)) * 10
-    return min(move, 100)
+    return min(abs(np.log(val)) * 10, 100)
 
 df["FX Move (%)"] = df["Currency"].apply(fx_move)
 
-# =========================
-# BTC (multi-source reconciliation)
-# =========================
-def get_btc_sources():
-    c1 = safe_get("https://api.coingecko.com/api/v3/simple/price", {"ids":"bitcoin","vs_currencies":"usd"})
-    c2 = safe_get("https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT")
-
+# =========================================================
+# BTC (2 SOURCES)
+# =========================================================
+def get_btc():
     v1 = None
     v2 = None
 
     try:
-        v1 = c1["bitcoin"]["usd"]
+        r = requests.get(
+            "https://api.coingecko.com/api/v3/simple/price",
+            params={"ids": "bitcoin", "vs_currencies": "usd"},
+            timeout=6
+        )
+        v1 = r.json()["bitcoin"]["usd"]
     except:
         pass
 
     try:
-        v2 = float(c2["price"])
+        r = requests.get(
+            "https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT",
+            timeout=6
+        )
+        v2 = float(r.json()["price"])
     except:
         pass
 
     return reconcile([v1, v2])
 
-btc_price, btc_spread, btc_conf = get_btc_sources()
+btc_price, btc_spread, btc_conf = get_btc()
 
-# =========================
-# GOLD (multi-source reconciliation)
-# =========================
-def get_gold_sources():
+# =========================================================
+# GOLD (FIXED PROPERLY - NO FAKE VALUES)
+# =========================================================
+def get_gold():
     v1 = None
     v2 = None
 
-    # -------------------------
-    # SOURCE 1: Yahoo Finance
-    # -------------------------
+    # Yahoo Finance (GC=F)
     try:
-        url = "https://query1.finance.yahoo.com/v7/finance/quote"
-        r = requests.get(url, params={"symbols": "GC=F"}, timeout=5)
-        data = r.json()
-
-        result = data.get("quoteResponse", {}).get("result", [])
-        if result:
-            v1 = float(result[0].get("regularMarketPrice"))
+        r = requests.get(
+            "https://query1.finance.yahoo.com/v7/finance/quote",
+            params={"symbols": "GC=F"},
+            timeout=6
+        )
+        res = r.json()["quoteResponse"]["result"]
+        if res:
+            v1 = res[0].get("regularMarketPrice")
     except:
         pass
 
-    # -------------------------
-    # SOURCE 2: Stooq (backup)
-    # -------------------------
+    # Stooq fallback
     try:
-        r = requests.get("https://stooq.com/q/l/?s=xauusd&i=d", timeout=5)
-        lines = r.text.split("\n")
-
-        if len(lines) > 1:
-            parts = lines[1].split(",")
-            v2 = float(parts[3])  # Close price
-    except:
-        pass
-
-    # IMPORTANT: return AFTER both sources
-    return reconcile([v1, v2])
-    # -------------------------
-    # SOURCE 2: Stooq (very stable)
-    # -------------------------
-    try:
-        r = requests.get("https://stooq.com/q/l/?s=xauusd&i=d", timeout=5)
-        lines = r.text.split("\n")
-
-        if len(lines) > 1:
-            parts = lines[1].split(",")
-            v2 = float(parts[3])  # Close price
+        r = requests.get("https://stooq.com/q/l/?s=xauusd&i=d", timeout=6)
+        line = r.text.split("\n")[1].split(",")
+        v2 = float(line[3])
     except:
         pass
 
     return reconcile([v1, v2])
 
-gold_price, gold_spread, gold_conf = get_gold_sources()
+gold_price, gold_spread, gold_conf = get_gold()
 
-# =========================
+# =========================================================
 # SIGNAL MODEL
-# =========================
+# =========================================================
 df["Signal (%)"] = (
     df["Stress (%)"] * 0.65 +
-    abs(df["Delta (%)"]) * 0.2 +
+    df["Delta (%)"].abs() * 0.2 +
     df["FX Move (%)"].fillna(0) * 0.15
 )
 
-df["Signal (%)"] = df["Signal (%)"].clip(0,100).round(2)
+df["Signal (%)"] = df["Signal (%)"].clip(0, 100).round(2)
 
-# =========================
-# RISK
-# =========================
+# =========================================================
+# RISK MODEL
+# =========================================================
 def risk(x):
     if x > 75:
         return "🔴 High Risk"
@@ -189,26 +171,9 @@ def risk(x):
 
 df["Risk"] = df["Signal (%)"].apply(risk)
 
-# =========================
-# DATA QUALITY PANEL
-# =========================
-st.subheader("🧠 Data Reconciliation Layer")
-
-st.write("### BTC")
-st.write(f"Price: {btc_price}")
-st.write(f"Spread: {btc_spread:.2f}")
-st.write(f"Confidence: {btc_conf}")
-
-st.write("### GOLD")
-st.write(f"Price: {gold_price}")
-st.write(f"Spread: {gold_spread:.2f}")
-st.write(f"Confidence: {gold_conf}")
-
-st.divider()
-
-# =========================
+# =========================================================
 # HEADER
-# =========================
+# =========================================================
 c1, c2, c3 = st.columns(3)
 
 with c1:
@@ -222,9 +187,26 @@ with c3:
 
 st.divider()
 
-# =========================
+# =========================================================
+# DATA QUALITY PANEL
+# =========================================================
+st.subheader("🧠 Data Reconciliation Layer")
+
+st.write("### BTC")
+st.write(f"Price: {btc_price}")
+st.write(f"Spread: {btc_spread}")
+st.write(f"Confidence: {btc_conf}")
+
+st.write("### GOLD")
+st.write(f"Price: {gold_price}")
+st.write(f"Spread: {gold_spread}")
+st.write(f"Confidence: {gold_conf}")
+
+st.divider()
+
+# =========================================================
 # TOP RISK
-# =========================
+# =========================================================
 st.subheader("🚨 Highest Risk Countries")
 
 st.dataframe(
@@ -235,9 +217,9 @@ st.dataframe(
     use_container_width=True
 )
 
-# =========================
+# =========================================================
 # FULL TABLE
-# =========================
+# =========================================================
 st.subheader("🌍 Global Macro Table")
 
 st.dataframe(
@@ -246,14 +228,14 @@ st.dataframe(
     use_container_width=True
 )
 
-# =========================
+# =========================================================
 # CHART
-# =========================
+# =========================================================
 st.subheader("📊 Signal Distribution")
 st.bar_chart(df.set_index("Label")["Signal (%)"])
 
-# =========================
+# =========================================================
 # REFRESH
-# =========================
+# =========================================================
 if st.button("Refresh"):
     st.rerun()
