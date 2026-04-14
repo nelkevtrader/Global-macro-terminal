@@ -131,8 +131,22 @@ def get_gold_sources():
             v1 = float(result[0].get("regularMarketPrice"))
     except:
         pass
-    return reconcile([v1, v2])
 
+    # -------------------------
+    # SOURCE 2: Stooq (backup)
+    # -------------------------
+    try:
+        r = requests.get("https://stooq.com/q/l/?s=xauusd&i=d", timeout=5)
+        lines = r.text.split("\n")
+
+        if len(lines) > 1:
+            parts = lines[1].split(",")
+            v2 = float(parts[3])  # Close price
+    except:
+        pass
+
+    # IMPORTANT: return AFTER both sources
+    return reconcile([v1, v2])
     # -------------------------
     # SOURCE 2: Stooq (very stable)
     # -------------------------
