@@ -4,23 +4,22 @@ import numpy as np
 import requests
 
 st.set_page_config(layout="wide")
-st.title("🌍 Global Macro Stress Terminal — Deterministic Engine")
+st.title("🌍 Macro Quant Model v1 — Deterministic Engine")
 
 # =========================================================
-# FIXED INPUT DATA (NO EXTERNAL RANDOM BACKEND)
+# BASE STRUCTURE (NO RANDOMNESS)
 # =========================================================
-
-BASE_COUNTRIES = {
-    "EGP": 0.78, "TRY": 0.72, "ARS": 0.85,
-    "NGN": 0.70, "ZAR": 0.55, "PKR": 0.73,
-    "LKR": 0.68, "GHS": 0.60, "KES": 0.57,
+BASE = {
+    "EGP": 0.80, "TRY": 0.78, "ARS": 0.85,
+    "NGN": 0.74, "ZAR": 0.55, "PKR": 0.76,
+    "LKR": 0.70, "GHS": 0.62, "KES": 0.60,
     "USD": 0.30, "EUR": 0.35, "JPY": 0.40,
     "GBP": 0.38, "CNY": 0.45, "INR": 0.52,
-    "BRL": 0.58, "MXN": 0.50, "RUB": 0.75,
+    "BRL": 0.58, "MXN": 0.50, "RUB": 0.77,
     "IDR": 0.49, "VND": 0.47
 }
 
-currency_map = {
+NAME = {
     "EGP": "Egypt","TRY": "Turkey","ARS": "Argentina",
     "NGN": "Nigeria","ZAR": "South Africa","PKR": "Pakistan",
     "LKR": "Sri Lanka","GHS": "Ghana","KES": "Kenya",
@@ -31,146 +30,150 @@ currency_map = {
 }
 
 # =========================================================
-# DETERMINISTIC ENGINE (NO RANDOMNESS)
+# FX STRESS FACTOR (STABLE MODEL)
 # =========================================================
-def compute_stress(base_value, currency):
-    """
-    Deterministic adjustment based on FX sensitivity proxy
-    """
-    fx_factor = {
-        "EGP": 1.15, "TRY": 1.12, "ARS": 1.18,
-        "NGN": 1.10, "ZAR": 1.05, "PKR": 1.11,
-        "LKR": 1.09, "GHS": 1.06, "KES": 1.04,
-        "USD": 0.90, "EUR": 0.92, "JPY": 0.93,
-        "GBP": 0.91, "CNY": 0.95, "INR": 1.00,
-        "BRL": 1.03, "MXN": 0.99, "RUB": 1.14,
-        "IDR": 0.97, "VND": 0.96
-    }
-
-    return round(base_value * fx_factor.get(currency, 1.0), 4)
+FX_IMPACT = {
+    "EGP": 1.20, "TRY": 1.18, "ARS": 1.25,
+    "NGN": 1.15, "ZAR": 1.05, "PKR": 1.14,
+    "LKR": 1.10, "GHS": 1.08, "KES": 1.06,
+    "USD": 0.90, "EUR": 0.92, "JPY": 0.93,
+    "GBP": 0.91, "CNY": 0.95, "INR": 1.00,
+    "BRL": 1.03, "MXN": 0.99, "RUB": 1.17,
+    "IDR": 0.97, "VND": 0.96
+}
 
 # =========================================================
-# BUILD DATAFRAME (DETERMINISTIC ONLY)
+# STRESS ENGINE (CORE MODEL)
 # =========================================================
+def stress_model(base, ccy):
+    fx = FX_IMPACT.get(ccy, 1.0)
+    return base * fx
+
 rows = []
-for ccy, base in BASE_COUNTRIES.items():
-    stress = compute_stress(base, ccy)
-    rows.append([ccy, currency_map.get(ccy, ccy), stress])
+for ccy, base in BASE.items():
+    s = stress_model(base, ccy)
+    rows.append([ccy, NAME.get(ccy, ccy), s])
 
 df = pd.DataFrame(rows, columns=["Currency", "Country", "Stress"])
 
-df["Label"] = df["Currency"] + " - " + df["Country"]
+# Normalize (quant-style scaling)
+df["Stress Score"] = (df["Stress"] * 100).round(2)
 
-# FIXED (NO RANDOM DRIFT)
-df["Stress (%)"] = (df["Stress"] * 100).round(2)
+# Rank system (IMPORTANT FIX FOR STABILITY)
+df = df.sort_values("Stress Score", ascending=False).reset_index(drop=True)
 
-# Deterministic delta (stable ordering only)
-df = df.sort_values("Stress (%)", ascending=False)
-df["Delta (%)"] = df["Stress (%)"].diff().fillna(0).round(2)
+# Delta is deterministic (rank-based)
+df["Delta"] = df["Stress Score"].diff().fillna(0).round(2)
 
 # =========================================================
-# SIGNAL MODEL (STABLE)
+# SIGNAL MODEL (MULTI-FACTOR QUANT STYLE)
 # =========================================================
-df["Signal (%)"] = (
-    df["Stress (%)"] * 0.7 +
-    df["Delta (%)"].abs() * 0.3
+df["Signal"] = (
+    df["Stress Score"] * 0.6 +
+    df["Delta"].abs() * 0.4
 )
 
-df["Signal (%)"] = df["Signal (%)"].clip(0, 100).round(2)
+df["Signal"] = df["Signal"].clip(0, 100).round(2)
 
 # =========================================================
-# RISK LABELS
+# RISK REGIME CLASSIFICATION
 # =========================================================
 def risk(x):
     if x > 75:
-        return "🔴 High Risk"
+        return "🔴 Risk-Off Extreme"
     elif x > 60:
-        return "🟠 Warning"
+        return "🟠 Risk-Off"
     elif x > 40:
-        return "🟡 Elevated"
-    return "🟢 Stable"
+        return "🟡 Neutral"
+    return "🟢 Risk-On"
 
-df["Risk"] = df["Signal (%)"].apply(risk)
+df["Regime"] = df["Signal"].apply(risk)
 
 # =========================================================
-# SAFE MARKET DATA (NO RELIANCE ON UNSTABLE BACKENDS)
+# CROSS-ASSET ANCHORS
 # =========================================================
-def safe_price(url, key=None):
+def get_btc():
     try:
-        r = requests.get(url, timeout=6)
-        data = r.json()
-        if key:
-            return data[key]
-        return data
+        r = requests.get(
+            "https://api.coingecko.com/api/v3/simple/price",
+            params={"ids": "bitcoin", "vs_currencies": "usd"},
+            timeout=6
+        )
+        return r.json()["bitcoin"]["usd"]
     except:
         return None
 
-# BTC
-btc = None
-try:
-    btc = safe_price("https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd")["bitcoin"]["usd"]
-except:
-    btc = None
+def get_gold():
+    try:
+        r = requests.get("https://stooq.com/q/l/?s=xauusd&i=d", timeout=6)
+        return float(r.text.split("\n")[1].split(",")[3])
+    except:
+        return None
 
-# GOLD (ONLY ONE SOURCE — STABLE + NO N/A CHAINS)
-gold = None
-try:
-    r = requests.get("https://stooq.com/q/l/?s=xauusd&i=d", timeout=6)
-    line = r.text.split("\n")[1].split(",")
-    gold = float(line[3])
-except:
-    gold = None
+btc = get_btc()
+gold = get_gold()
+
+# =========================================================
+# GLOBAL MACRO RISK INDEX (CMRI)
+# =========================================================
+cmri = df["Signal"].mean().round(2)
+
+if cmri > 70:
+    regime = "🔴 Global Risk-Off"
+elif cmri > 50:
+    regime = "🟠 Elevated Risk"
+else:
+    regime = "🟢 Stable Macro Regime"
 
 # =========================================================
 # HEADER
 # =========================================================
-c1, c2, c3 = st.columns(3)
+c1, c2, c3, c4 = st.columns(4)
 
 with c1:
-    st.metric("Bitcoin", f"${btc:,.0f}" if btc else "N/A")
+    st.metric("CMRI", cmri)
 
 with c2:
-    st.metric("Gold", f"${gold:,.0f}" if gold else "N/A")
+    st.metric("BTC", f"${btc:,.0f}" if btc else "N/A")
 
 with c3:
-    st.metric("Countries Tracked", len(df))
+    st.metric("Gold", f"${gold:,.0f}" if gold else "N/A")
+
+with c4:
+    st.metric("Regime", regime)
 
 st.divider()
 
 # =========================================================
-# TOP RISK
+# TOP RISKS
 # =========================================================
-st.subheader("🚨 Highest Risk Countries (Stable)")
+st.subheader("🚨 Macro Risk Leaders")
 
 st.dataframe(
-    df.sort_values("Signal (%)", ascending=False)
-    [["Label","Stress (%)","Signal (%)","Risk"]]
-    .head(7),
+    df.head(7)[["Currency","Country","Stress Score","Signal","Regime"]],
     use_container_width=True
 )
 
 # =========================================================
-# FULL TABLE
+# FULL MODEL
 # =========================================================
-st.subheader("🌍 Macro Stress Map (Deterministic)")
+st.subheader("🌍 Macro Quant Map")
 
 st.dataframe(
-    df[["Label","Stress (%)","Delta (%)","Signal (%)","Risk"]],
+    df[["Currency","Country","Stress Score","Delta","Signal","Regime"]],
     use_container_width=True
 )
 
 # =========================================================
-# STABLE CHART (THIS WILL NO LONGER BREAK)
+# STABLE CHART
 # =========================================================
-st.subheader("📊 Signal Distribution")
+st.subheader("📊 Risk Distribution")
 
-chart_df = df.set_index("Label")["Signal (%)"]
-st.bar_chart(chart_df)
+st.bar_chart(df.set_index("Country")["Signal"])
 
 # =========================================================
 # EXPLANATION
 # =========================================================
 st.caption(
-    "This system is fully deterministic. No external macro backend. "
-    "All values are reproducible and stable per session."
+    "Macro Quant Model v1: deterministic factor-based stress model with regime classification and cross-asset anchors."
 )
