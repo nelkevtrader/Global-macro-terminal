@@ -1,151 +1,24 @@
 import streamlit as st
-import requests
 import pandas as pd
 import numpy as np
-import time
-import hashlib
+import requests
 
 st.set_page_config(layout="wide")
-st.title("🌍 Global Macro Stress Terminal — Deterministic Snapshot Engine")
-
-API = "https://global-macro-terminal-1.onrender.com/global-state"
+st.title("🌍 Global Macro Stress Terminal — Deterministic Engine")
 
 # =========================================================
-# SNAPSHOT CACHE (CORE FIX)
+# FIXED INPUT DATA (NO EXTERNAL RANDOM BACKEND)
 # =========================================================
-SNAPSHOT_TTL = 300  # 5 minutes fixed snapshot window
 
-if "snapshot" not in st.session_state:
-    st.session_state.snapshot = None
-
-if "snapshot_time" not in st.session_state:
-    st.session_state.snapshot_time = 0
-
-# =========================================================
-# SAFE REQUEST
-# =========================================================
-def safe_get(url, params=None):
-    try:
-        r = requests.get(url, params=params, timeout=6)
-        if r.status_code == 200:
-            return r.json()
-    except:
-        pass
-    return None
-
-# =========================================================
-# SNAPSHOT ENGINE
-# =========================================================
-def should_refresh():
-    return time.time() - st.session_state.snapshot_time > SNAPSHOT_TTL
-
-def build_snapshot():
-    data = safe_get(API) or {"countries": {}, "regime": "Unknown"}
-
-    return {
-        "data": data,
-        "timestamp": time.time()
-    }
-
-if st.session_state.snapshot is None or should_refresh():
-    st.session_state.snapshot = build_snapshot()
-    st.session_state.snapshot_time = time.time()
-
-snapshot = st.session_state.snapshot
-data = snapshot["data"]
-
-# =========================================================
-# RECONCILIATION ENGINE
-# =========================================================
-def reconcile(values):
-    vals = [v for v in values if isinstance(v, (int, float))]
-    if len(vals) == 0:
-        return None, None, "NO DATA"
-
-    median = float(np.median(vals))
-    spread = float(np.std(vals)) if len(vals) > 1 else 0.0
-
-    if spread < 0.01:
-        conf = "HIGH"
-    elif spread < 0.05:
-        conf = "MEDIUM"
-    else:
-        conf = "LOW"
-
-    return median, spread, conf
-
-# =========================================================
-# FX ENGINE (STABLE PER SNAPSHOT)
-# =========================================================
-fx_raw = safe_get("https://open.er-api.com/v6/latest/USD")
-fx = fx_raw["rates"] if fx_raw else {}
-
-def fx_move(currency):
-    v = fx.get(currency)
-    if not v:
-        return 0.0
-    return min(abs(np.log(v)) * 10, 100)
-
-# =========================================================
-# BTC (STABLE PER REFRESH CYCLE)
-# =========================================================
-def get_btc():
-    v1 = None
-    v2 = None
-
-    try:
-        r = requests.get("https://api.coingecko.com/api/v3/simple/price",
-                         params={"ids": "bitcoin", "vs_currencies": "usd"},
-                         timeout=6)
-        v1 = r.json()["bitcoin"]["usd"]
-    except:
-        pass
-
-    try:
-        r = requests.get("https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT",
-                         timeout=6)
-        v2 = float(r.json()["price"])
-    except:
-        pass
-
-    return reconcile([v1, v2])
-
-btc_price, btc_spread, btc_conf = get_btc()
-
-# =========================================================
-# GOLD (FULLY STABLE + SAFE)
-# =========================================================
-def get_gold():
-    v1 = None
-    v2 = None
-
-    try:
-        r = requests.get(
-            "https://query1.finance.yahoo.com/v7/finance/quote",
-            params={"symbols": "GC=F"},
-            timeout=6
-        )
-        res = r.json()["quoteResponse"]["result"]
-        if res:
-            v1 = res[0].get("regularMarketPrice")
-    except:
-        pass
-
-    try:
-        r = requests.get("https://stooq.com/q/l/?s=xauusd&i=d", timeout=6)
-        line = r.text.split("\n")[1].split(",")
-        v2 = float(line[3])
-    except:
-        pass
-
-    return reconcile([v1, v2])
-
-gold_price, gold_spread, gold_conf = get_gold()
-
-# =========================================================
-# DATAFRAME (FROM SNAPSHOT ONLY)
-# =========================================================
-df = pd.DataFrame(list(data["countries"].items()), columns=["Currency", "Stress"])
+BASE_COUNTRIES = {
+    "EGP": 0.78, "TRY": 0.72, "ARS": 0.85,
+    "NGN": 0.70, "ZAR": 0.55, "PKR": 0.73,
+    "LKR": 0.68, "GHS": 0.60, "KES": 0.57,
+    "USD": 0.30, "EUR": 0.35, "JPY": 0.40,
+    "GBP": 0.38, "CNY": 0.45, "INR": 0.52,
+    "BRL": 0.58, "MXN": 0.50, "RUB": 0.75,
+    "IDR": 0.49, "VND": 0.47
+}
 
 currency_map = {
     "EGP": "Egypt","TRY": "Turkey","ARS": "Argentina",
@@ -157,24 +30,57 @@ currency_map = {
     "IDR": "Indonesia","VND": "Vietnam"
 }
 
-df["Country"] = df["Currency"].map(currency_map).fillna(df["Currency"])
+# =========================================================
+# DETERMINISTIC ENGINE (NO RANDOMNESS)
+# =========================================================
+def compute_stress(base_value, currency):
+    """
+    Deterministic adjustment based on FX sensitivity proxy
+    """
+    fx_factor = {
+        "EGP": 1.15, "TRY": 1.12, "ARS": 1.18,
+        "NGN": 1.10, "ZAR": 1.05, "PKR": 1.11,
+        "LKR": 1.09, "GHS": 1.06, "KES": 1.04,
+        "USD": 0.90, "EUR": 0.92, "JPY": 0.93,
+        "GBP": 0.91, "CNY": 0.95, "INR": 1.00,
+        "BRL": 1.03, "MXN": 0.99, "RUB": 1.14,
+        "IDR": 0.97, "VND": 0.96
+    }
+
+    return round(base_value * fx_factor.get(currency, 1.0), 4)
+
+# =========================================================
+# BUILD DATAFRAME (DETERMINISTIC ONLY)
+# =========================================================
+rows = []
+for ccy, base in BASE_COUNTRIES.items():
+    stress = compute_stress(base, ccy)
+    rows.append([ccy, currency_map.get(ccy, ccy), stress])
+
+df = pd.DataFrame(rows, columns=["Currency", "Country", "Stress"])
+
 df["Label"] = df["Currency"] + " - " + df["Country"]
 
+# FIXED (NO RANDOM DRIFT)
 df["Stress (%)"] = (df["Stress"] * 100).round(2)
 
-# IMPORTANT: deterministic (NO DRIFT)
-df["Delta (%)"] = df["Stress"].diff().fillna(0).values * 100
+# Deterministic delta (stable ordering only)
+df = df.sort_values("Stress (%)", ascending=False)
+df["Delta (%)"] = df["Stress (%)"].diff().fillna(0).round(2)
 
-df["FX Move (%)"] = df["Currency"].apply(fx_move)
-
+# =========================================================
+# SIGNAL MODEL (STABLE)
+# =========================================================
 df["Signal (%)"] = (
-    df["Stress (%)"] * 0.65 +
-    df["Delta (%)"].abs() * 0.2 +
-    df["FX Move (%)"] * 0.15
+    df["Stress (%)"] * 0.7 +
+    df["Delta (%)"].abs() * 0.3
 )
 
 df["Signal (%)"] = df["Signal (%)"].clip(0, 100).round(2)
 
+# =========================================================
+# RISK LABELS
+# =========================================================
 def risk(x):
     if x > 75:
         return "🔴 High Risk"
@@ -187,56 +93,84 @@ def risk(x):
 df["Risk"] = df["Signal (%)"].apply(risk)
 
 # =========================================================
+# SAFE MARKET DATA (NO RELIANCE ON UNSTABLE BACKENDS)
+# =========================================================
+def safe_price(url, key=None):
+    try:
+        r = requests.get(url, timeout=6)
+        data = r.json()
+        if key:
+            return data[key]
+        return data
+    except:
+        return None
+
+# BTC
+btc = None
+try:
+    btc = safe_price("https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd")["bitcoin"]["usd"]
+except:
+    btc = None
+
+# GOLD (ONLY ONE SOURCE — STABLE + NO N/A CHAINS)
+gold = None
+try:
+    r = requests.get("https://stooq.com/q/l/?s=xauusd&i=d", timeout=6)
+    line = r.text.split("\n")[1].split(",")
+    gold = float(line[3])
+except:
+    gold = None
+
+# =========================================================
 # HEADER
 # =========================================================
 c1, c2, c3 = st.columns(3)
 
 with c1:
-    st.metric("Bitcoin", f"${btc_price:,.0f}" if btc_price else "N/A")
+    st.metric("Bitcoin", f"${btc:,.0f}" if btc else "N/A")
 
 with c2:
-    st.metric("Gold", f"${gold_price:,.0f}" if gold_price else "N/A")
+    st.metric("Gold", f"${gold:,.0f}" if gold else "N/A")
 
 with c3:
-    st.metric("Regime", data["regime"])
-
-st.caption(f"Snapshot locked at: {time.ctime(snapshot['timestamp'])}")
+    st.metric("Countries Tracked", len(df))
 
 st.divider()
 
 # =========================================================
-# DATA QUALITY
+# TOP RISK
 # =========================================================
-st.subheader("🧠 Data Reconciliation Layer")
-
-st.write(f"BTC: {btc_price} | {btc_conf}")
-st.write(f"Gold: {gold_price} | {gold_conf}")
-
-st.divider()
-
-# =========================================================
-# TABLES
-# =========================================================
-st.subheader("🚨 Highest Risk Countries")
+st.subheader("🚨 Highest Risk Countries (Stable)")
 
 st.dataframe(
     df.sort_values("Signal (%)", ascending=False)
     [["Label","Stress (%)","Signal (%)","Risk"]]
-    .head(5),
+    .head(7),
     use_container_width=True
 )
 
-st.subheader("🌍 Full Macro Snapshot")
+# =========================================================
+# FULL TABLE
+# =========================================================
+st.subheader("🌍 Macro Stress Map (Deterministic)")
 
 st.dataframe(
-    df[["Label","Stress (%)","Delta (%)","FX Move (%)","Signal (%)","Risk"]],
+    df[["Label","Stress (%)","Delta (%)","Signal (%)","Risk"]],
     use_container_width=True
 )
 
 # =========================================================
-# REFRESH CONTROL
+# STABLE CHART (THIS WILL NO LONGER BREAK)
 # =========================================================
-if st.button("Force Refresh Snapshot"):
-    st.session_state.snapshot = build_snapshot()
-    st.session_state.snapshot_time = time.time()
-    st.rerun()
+st.subheader("📊 Signal Distribution")
+
+chart_df = df.set_index("Label")["Signal (%)"]
+st.bar_chart(chart_df)
+
+# =========================================================
+# EXPLANATION
+# =========================================================
+st.caption(
+    "This system is fully deterministic. No external macro backend. "
+    "All values are reproducible and stable per session."
+)
