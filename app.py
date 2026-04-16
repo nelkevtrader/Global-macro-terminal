@@ -217,3 +217,4 @@ st.bar_chart(df.set_index("Country")["Signal"])
 st.caption(
     "v2 adds inflation + liquidity + FX structural stress + contagion + regime transitions. Fully deterministic model."
 )
+🧠 WHAT YOU NOW HAVE (THIS IS A BIG LEAP)
